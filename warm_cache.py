@@ -48,17 +48,24 @@ SITEMAP_ORDER = (
 )
 
 
+def _read_body(resp):
+    """بدنه پاسخ را می‌خواند و در صورت gzip بودن، باز می‌کند."""
+    body = resp.read()
+    if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+        body = gzip.decompress(body)
+    return body
+
+
 def fetch(url, ua):
     req = urllib.request.Request(url, headers={
         "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
         "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip",   # حجم دانلود تا ۶ برابر کمتر — سرعت بالاتر روی مسیر ایران
     })
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-            if resp.headers.get("Content-Encoding") == "gzip":
-                body = gzip.decompress(body)
+            _read_body(resp)
             return resp.status, resp.headers.get("X-LiteSpeed-Cache", "-")
     except Exception as e:
         return 0, str(e)[:60]
@@ -75,22 +82,39 @@ def fetch_retry(url, ua):
 
 
 def _sitemap_urls(sm):
-    req = urllib.request.Request(sm, headers={"User-Agent": DESKTOP_UA})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        body = r.read().decode("utf-8", "ignore")
-    return LOC_RE.findall(body)
+    # نقشه سایت ممکن است روی هاست اشتراکی کند شود — ۳ بار تلاش می‌کنیم
+    last = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(sm, headers={
+                "User-Agent": DESKTOP_UA,
+                "Accept-Encoding": "gzip",
+            })
+            with urllib.request.urlopen(req, timeout=30) as r:
+                body = _read_body(r).decode("utf-8", "ignore")
+            return LOC_RE.findall(body)
+        except Exception as e:
+            last = e
+            time.sleep(3)
+    raise last
 
 
 def collect_urls():
     urls = list(PRIORITY_URLS)
-    try:
-        req = urllib.request.Request(SITEMAP_INDEX, headers={"User-Agent": DESKTOP_UA})
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            index_body = r.read().decode("utf-8", "ignore")
-        sitemaps = LOC_RE.findall(index_body)
-    except Exception as e:
-        print("sitemap index error:", e)
-        sitemaps = []
+    sitemaps = []
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(SITEMAP_INDEX, headers={
+                "User-Agent": DESKTOP_UA,
+                "Accept-Encoding": "gzip",
+            })
+            with urllib.request.urlopen(req, timeout=30) as r:
+                index_body = _read_body(r).decode("utf-8", "ignore")
+            sitemaps = LOC_RE.findall(index_body)
+            break
+        except Exception as e:
+            print(f"sitemap index error (try {attempt + 1}/3):", e)
+            time.sleep(3)
     # فقط نقشه‌های مهم (برچسب‌ها و بقیه لازم نیست) — به ترتیب اولویت
     for w in SITEMAP_ORDER:
         for sm in sitemaps:
