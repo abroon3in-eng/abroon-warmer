@@ -1,0 +1,37 @@
+name: Abroon Cache Warmer
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # هر ۴ ساعت (UTC)
+  workflow_dispatch: {}      # دکمه «Run workflow» برای تست دستی
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abroon-warmer
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Warm cache (desktop + mobile, all pages)
+        run: python3 warm_cache.py
+
+      - name: Keepalive (prevent 60-day auto-disable)
+        run: |
+          if [ "$(date -u +%H)" = "00" ]; then
+            git config user.name  "abroon-warmer-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            echo "last run: $(date -u '+%F %T')" > .last-run.txt
+            git add .last-run.txt
+            git diff --cached --quiet || (git commit -m "keepalive: $(date -u +%F)" && git push)
+            echo "keepalive committed"
+          else
+            echo "skip (keepalive runs once a day at 00 UTC)"
+          fi
